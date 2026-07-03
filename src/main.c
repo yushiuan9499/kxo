@@ -125,7 +125,6 @@ static DECLARE_KFIFO_PTR(rx_fifo, unsigned char);
 static DEFINE_MUTEX(read_lock);
 static DEFINE_MUTEX(consumer_lock);
 static DEFINE_SPINLOCK(avg_lock);
-static DEFINE_MUTEX(mcts_lock);
 static DEFINE_MUTEX(negamax_lock);
 
 /* Wait queue to implement blocking I/O from userspace */
@@ -207,9 +206,7 @@ static int play_agent_move(int who, unsigned int table, char player)
 
     switch (who) {
     case XO_AI_MCTS:
-        mutex_lock(&mcts_lock);
-        move = kxo_shutting_down() ? -1 : agents[who].play(table, player);
-        mutex_unlock(&mcts_lock);
+        move = agents[who].play(table, player);
         break;
     case XO_AI_NEGAMAX:
         mutex_lock(&negamax_lock);

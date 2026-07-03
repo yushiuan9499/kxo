@@ -14,6 +14,7 @@ struct node {
     struct node *children[N_GRIDS];
 };
 
+static DEFINE_SPINLOCK(xoro_lock);
 static struct mcts_info mcts_obj;
 
 static struct node *new_node(int move, char player, struct node *parent)
@@ -119,7 +120,9 @@ static fixed_point_t simulate(uint32_t table, char player)
 {
     char current_player = player;
     uint32_t temp_table = table;
+    spin_lock_bh(&xoro_lock);
     xoro_jump(&(mcts_obj.xoro_obj));
+    spin_unlock_bh(&xoro_lock);
     while (1) {
         int *moves = available_moves(temp_table);
         if (moves[0] == -1) {
@@ -129,7 +132,10 @@ static fixed_point_t simulate(uint32_t table, char player)
         int n_moves = 0;
         while (n_moves < N_GRIDS && moves[n_moves] != -1)
             ++n_moves;
-        int move = moves[xoro_next(&(mcts_obj.xoro_obj)) % n_moves];
+        spin_lock_bh(&xoro_lock);
+        u64 rand_val = xoro_next(&(mcts_obj.xoro_obj));
+        spin_unlock_bh(&xoro_lock);
+        int move = moves[rand_val % n_moves];
         kfree(moves);
         temp_table = VAL_SET_CELL(temp_table, move, current_player);
         char win;
@@ -174,7 +180,6 @@ int mcts(uint32_t table, char player)
     struct node *root = new_node(-1, player, NULL);
     if (!root)
         return -1;
-    mcts_obj.nr_active_nodes = 1;
     for (int i = 0; i < ITERATIONS; i++) {
         if (READ_ONCE(kxo_stop_work))
             break;
@@ -193,7 +198,7 @@ int mcts(uint32_t table, char player)
                 break;
             }
             if (node->children[0] == NULL)
-                mcts_obj.nr_active_nodes += expand(node, temp_table);
+                expand(node, temp_table);
             node = select_move(node);
             if (!node) {
                 free_node(root);
@@ -219,5 +224,4 @@ int mcts(uint32_t table, char player)
 void mcts_init(void)
 {
     xoro_init(&(mcts_obj.xoro_obj));
-    mcts_obj.nr_active_nodes = 0;
 }
