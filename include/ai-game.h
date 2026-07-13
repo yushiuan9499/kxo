@@ -5,11 +5,14 @@
 #include <linux/workqueue.h>
 #include "rl.h"
 
-typedef int (*ai_alg)(unsigned int table, char player);
+struct ai_game;
+typedef int (*ai_alg)(struct ai_game *game, char player);
+#define AI_RESCHED -2
 
 enum ai_game_state {
     GAME_BUSY,
     GAME_READY,
+    GAME_RESCHED,
     GAME_DONE,
 };
 
@@ -23,6 +26,8 @@ struct ai_avg {
 struct ai_game {
     struct xo_table xo_tlb;
     char turn;
+    unsigned cpu;
+    unsigned long nsecs_spent;
     enum ai_game_state state;
     struct mutex lock;
     struct work_struct ai_one_work;

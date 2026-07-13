@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ai-game.h"
 #include "xoroshiro.h"
 
 #define ITERATIONS 100000
@@ -9,5 +10,6 @@ struct mcts_info {
     int nr_active_nodes;
 };
 
-int mcts(uint32_t table, char player);
+int mcts(struct ai_game *game, char player);
 void mcts_init(void);
+void free_mcts(void);

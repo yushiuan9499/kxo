@@ -7,13 +7,14 @@
 
 static DEFINE_SPINLOCK(rl_lock);
 
-int play_rl(unsigned int table, char player)
+int play_rl(struct ai_game *game, char player)
 {
     int max_act = -1;
     rl_fxp max_q = RL_FIXED_MIN;
     int candidate_count = 1;
     u8 id = player - 1;
     unsigned long flags;
+    unsigned int table = game->xo_tlb.table;
     spin_lock_irqsave(&rl_lock, flags);
     for_each_empty_grid(i, table)
     {

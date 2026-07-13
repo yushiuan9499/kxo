@@ -5,7 +5,7 @@ ifneq ($(KERNELRELEASE),)
 
 obj-m := $(TARGET).o
 $(TARGET)-objs := src/main.o src/game.o src/xoroshiro.o src/mcts.o src/negamax.o
-$(TARGET)-objs += src/zobrist.o src/rl.o src/rl-state.o
+$(TARGET)-objs += src/zobrist.o src/rl.o src/rl-state.o src/ai_sched.o
 
 ccflags-y := -std=gnu99 -Wno-declaration-after-statement -I$(src)/include
 

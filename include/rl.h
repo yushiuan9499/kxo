@@ -22,7 +22,8 @@ void init_rl_agent(void);
 
 void free_rl_agent(void);
 
-int play_rl(unsigned int table, char player);
+struct ai_game;
+int play_rl(struct ai_game *game, char player);
 
 void update_state_value(const int *after_state_hash,
                         const rl_fxp *reward,

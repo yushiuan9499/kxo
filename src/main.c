@@ -17,6 +17,7 @@
 #include <linux/workqueue.h>
 
 #include "ai-game.h"
+#include "ai_sched.h"
 #include "mcts.h"
 #include "negamax.h"
 #include "rl.h"
@@ -43,7 +44,7 @@ MODULE_DESCRIPTION("In-kernel Tic-Tac-Toe game engine");
 #define NR_KMLDRV 1
 
 static int avg_period = 1000;
-static int delay = 100; /* time (in ms) to generate an event */
+static int delay = 10; /* time (in ms) to generate an event */
 
 /* Declare kernel module attribute for sysfs */
 
@@ -197,7 +198,7 @@ static void kxo_set_work_stop(bool stop)
     WRITE_ONCE(kxo_stop_work, stop);
 }
 
-static int play_agent_move(int who, unsigned int table, char player)
+static int play_agent_move(int who, struct ai_game *game, char player)
 {
     int move;
 
@@ -206,15 +207,15 @@ static int play_agent_move(int who, unsigned int table, char player)
 
     switch (who) {
     case XO_AI_MCTS:
-        move = agents[who].play(table, player);
+        move = agents[who].play(game, player);
         break;
     case XO_AI_NEGAMAX:
         mutex_lock(&negamax_lock);
-        move = kxo_shutting_down() ? -1 : agents[who].play(table, player);
+        move = kxo_shutting_down() ? -1 : agents[who].play(game, player);
         mutex_unlock(&negamax_lock);
         break;
     default:
-        move = agents[who].play(table, player);
+        move = agents[who].play(game, player);
         break;
     }
 
@@ -251,8 +252,17 @@ static void ai_one_work_func(struct work_struct *w)
     bool is_rl = who == XO_AI_RL;
     struct ai_agent *agent = &agents[who];
     pr_debug("[one]: id=%d, alg=%d\n", id, who);
-    WRITE_ONCE(move, play_agent_move(who, table, CELL_O));
+    WRITE_ONCE(move, play_agent_move(who, game, CELL_O));
     smp_mb();
+
+    if (move == AI_RESCHED) {
+        WRITE_ONCE(game->state, GAME_RESCHED);
+        WRITE_ONCE(game->cpu, clear_force(game->cpu));
+        smp_wmb();
+        resched_self(game->cpu, &game->ai_one_work);
+        mutex_unlock(&game->lock);
+        return;
+    }
 
     if (move != -1) {
         WRITE_ONCE(xo_tlb->table, VAL_SET_CELL(table, move, CELL_O));
@@ -281,8 +291,11 @@ static void ai_one_work_func(struct work_struct *w)
     ai_avgs[id].nsecs_o += nsecs;
     spin_unlock_bh(&avg_lock);
 
-    pr_info("kxo: game-%d %s:%s completed in %llu usec\n", id, __func__,
-            agent->name, (unsigned long long) nsecs >> 10);
+    commit_load(smp_processor_id(), who, nsecs);
+
+    pr_info("kxo: [CPU#%d] game-%d %s:%s completed in %llu usec\n",
+            smp_processor_id(), id, __func__, agent->name,
+            (unsigned long long) nsecs >> 10);
 }
 
 static void ai_two_work_func(struct work_struct *w)
@@ -312,8 +325,17 @@ static void ai_two_work_func(struct work_struct *w)
     bool is_rl = who == XO_AI_RL;
     struct ai_agent *agent = &agents[who];
     pr_debug("[two]: id=%d, alg=%d\n", id, who);
-    WRITE_ONCE(move, play_agent_move(who, table, CELL_X));
+    WRITE_ONCE(move, play_agent_move(who, game, CELL_X));
     smp_mb();
+
+    if (move == AI_RESCHED) {
+        WRITE_ONCE(game->state, GAME_RESCHED);
+        WRITE_ONCE(game->cpu, clear_force(game->cpu));
+        smp_wmb();
+        resched_self(game->cpu, &game->ai_two_work);
+        mutex_unlock(&game->lock);
+        return;
+    }
 
     if (move != -1) {
         WRITE_ONCE(xo_tlb->table, VAL_SET_CELL(table, move, CELL_X));
@@ -342,8 +364,12 @@ static void ai_two_work_func(struct work_struct *w)
     ai_avgs[id].nsecs_x += nsecs;
     spin_unlock_bh(&avg_lock);
 
-    pr_info("kxo: game-%d %s:%s completed in %llu usec\n", id, __func__,
-            agent->name, (unsigned long long) nsecs >> 10);
+    commit_load(smp_processor_id(), who, nsecs);
+
+
+    pr_info("kxo: [CPU#%d]  game-%d %s:%s completed in %llu usec\n",
+            smp_processor_id(), id, __func__, agent->name,
+            (unsigned long long) nsecs >> 10);
 }
 
 /* Workqueue for asynchronous bottom-half processing */
@@ -360,33 +386,8 @@ static void game_tasklet_func(unsigned long unfini)
     ktime_t tv_start, tv_end;
     s64 nsecs;
 
-    WARN_ON_ONCE(!in_interrupt());
-    WARN_ON_ONCE(!in_softirq());
-
     tv_start = ktime_get();
-
-    int n = hweight32(unfini);
-    for (int i = 0; i < n; i++) {
-        int id = ffs(unfini) - 1;
-        unfini &= ~(1u << id);
-
-        struct ai_game *game = &games[id];
-        enum ai_game_state state = READ_ONCE(game->state);
-        char turn = READ_ONCE(game->turn);
-        smp_rmb();
-
-        if (state == GAME_READY && turn == 'O') {
-            WRITE_ONCE(game->state, GAME_BUSY);
-            smp_wmb();
-            queue_work(kxo_workqueue, &game->ai_one_work);
-        } else if (state == GAME_READY && turn == 'X') {
-            WRITE_ONCE(game->state, GAME_BUSY);
-            smp_wmb();
-            queue_work(kxo_workqueue, &game->ai_two_work);
-        }
-        queue_work(kxo_workqueue, &game->drawboard_work);
-    }
-
+    sched_games(unfini, games);
     tv_end = ktime_get();
 
     nsecs = (s64) ktime_to_ns(ktime_sub(tv_end, tv_start));
@@ -744,6 +745,7 @@ static int __init kxo_init(void)
     mcts_init();
     init_rl_agent();
     fill_win_patterns();
+    init_ai_sched();
 
     for (int i = 0; i < N_GAMES; i++) {
         INIT_WORK(&finish_works[i].work, finish_game_work_func);
@@ -808,7 +810,10 @@ static void __exit kxo_exit(void)
     cdev_del(&kxo_cdev);
     unregister_chrdev_region(dev_id, NR_KMLDRV);
     free_rl_agent();
+    free_negamax();
+    free_mcts();
     zobrist_destroy();
+    free_ai_sched();
 
     kfifo_free(&rx_fifo);
     pr_info("kxo: unloaded\n");
