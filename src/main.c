@@ -258,8 +258,11 @@ static void ai_one_work_func(struct work_struct *w)
     if (move == AI_RESCHED) {
         WRITE_ONCE(game->state, GAME_RESCHED);
         WRITE_ONCE(game->cpu, clear_force(game->cpu));
+        game->nsecs_spent += ktime_to_ns(ktime_sub(ktime_get(), tv_start));
+        if (!resched_self(game->cpu, &game->ai_one_work)) {
+            WRITE_ONCE(game->state, GAME_READY);
+        }
         smp_wmb();
-        resched_self(game->cpu, &game->ai_one_work);
         mutex_unlock(&game->lock);
         return;
     }
@@ -285,8 +288,9 @@ static void ai_one_work_func(struct work_struct *w)
     smp_wmb();
     mutex_unlock(&game->lock);
     tv_end = ktime_get();
+    nsecs = game->nsecs_spent + ktime_to_ns(ktime_sub(tv_end, tv_start));
+    game->nsecs_spent = 0;
 
-    nsecs = (s64) ktime_to_ns(ktime_sub(tv_end, tv_start));
     spin_lock_bh(&avg_lock);
     ai_avgs[id].nsecs_o += nsecs;
     spin_unlock_bh(&avg_lock);
@@ -331,8 +335,11 @@ static void ai_two_work_func(struct work_struct *w)
     if (move == AI_RESCHED) {
         WRITE_ONCE(game->state, GAME_RESCHED);
         WRITE_ONCE(game->cpu, clear_force(game->cpu));
+        game->nsecs_spent += ktime_to_ns(ktime_sub(ktime_get(), tv_start));
+        if (!resched_self(game->cpu, &game->ai_two_work)) {
+            WRITE_ONCE(game->state, GAME_READY);
+        }
         smp_wmb();
-        resched_self(game->cpu, &game->ai_two_work);
         mutex_unlock(&game->lock);
         return;
     }
@@ -358,8 +365,9 @@ static void ai_two_work_func(struct work_struct *w)
     smp_wmb();
     mutex_unlock(&game->lock);
     tv_end = ktime_get();
+    nsecs = game->nsecs_spent + ktime_to_ns(ktime_sub(tv_end, tv_start));
+    game->nsecs_spent = 0;
 
-    nsecs = (s64) ktime_to_ns(ktime_sub(tv_end, tv_start));
     spin_lock_bh(&avg_lock);
     ai_avgs[id].nsecs_x += nsecs;
     spin_unlock_bh(&avg_lock);

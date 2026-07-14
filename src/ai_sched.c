@@ -131,7 +131,7 @@ void sched_games(unsigned long unfini, struct ai_game *games)
         struct ai_game *game = &games[id];
         enum ai_game_state state = READ_ONCE(game->state);
         char turn = READ_ONCE(game->turn);
-        int cpu = READ_ONCE(game->cpu);
+        int cpu = clear_force(READ_ONCE(game->cpu));
         smp_rmb();
 
         int who, other;
@@ -288,6 +288,37 @@ void sched_games(unsigned long unfini, struct ai_game *games)
 
         } else if (state == GAME_BUSY) {
             busy |= (1u << id);
+        }
+    }
+
+    n = hweight32(busy);
+    for (int i = 0; i < n; i++) {
+        int id = ffs(busy) - 1;
+        busy &= ~(1u << id);
+        struct ai_game *game = &games[id];
+        int turn = READ_ONCE(game->turn), who;
+        if (turn == 'O') {
+            who = XO_ATTR_AI_ALG(game->xo_tlb.attr) % XO_AI_TOT;
+        } else {
+            who = (XO_ATTR_AI_ALG(game->xo_tlb.attr) >> 2) % XO_AI_TOT;
+        }
+        int curr_cpu = clear_force(READ_ONCE(game->cpu));
+        if (cpu_budget[curr_cpu] < delay * LOAD_1MS >> 7 &&
+            max_budget[who] > delay * LOAD_1MS * 7 / 8) {
+            int new_cpu = best_cpu[who];
+            WRITE_ONCE(game->cpu, set_force(new_cpu));
+            cpu_budget[new_cpu] =
+                max(0l, cpu_budget[new_cpu] - (long) ai_load_safe[who]);
+            best_cpu[who] = -1;
+            max_budget[who] = -1;
+            for_each_online_cpu(cpu)
+            {
+                if (ai_of_cpu[cpu] == who &&
+                    cpu_budget[cpu] > max_budget[who]) {
+                    max_budget[who] = cpu_budget[cpu];
+                    best_cpu[who] = cpu;
+                }
+            }
         }
     }
     kfree(cpu_budget);
