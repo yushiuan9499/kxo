@@ -255,6 +255,14 @@ static void ai_one_work_func(struct work_struct *w)
     WRITE_ONCE(move, play_agent_move(who, game, CELL_O));
     smp_mb();
 
+    if (unlikely(move < -1 || move >= N_GRIDS ||
+                 TABLE_GET_CELL(table, move) != CELL_EMPTY)) {
+        pr_err("kxo: [one]: game-%d invalid move %d\n", id, move);
+        WRITE_ONCE(game->state, GAME_READY);
+        mutex_unlock(&game->lock);
+        return;
+    }
+
     if (move != -1) {
         WRITE_ONCE(xo_tlb->table, VAL_SET_CELL(table, move, CELL_O));
         WRITE_ONCE(xo_tlb->moves, SET_RECORD_CELL(xo_tlb->moves, move, steps));
@@ -319,6 +327,14 @@ static void ai_two_work_func(struct work_struct *w)
     pr_debug("[two]: id=%d, alg=%d\n", id, who);
     WRITE_ONCE(move, play_agent_move(who, game, CELL_X));
     smp_mb();
+
+    if (unlikely(move < -1 || move >= N_GRIDS ||
+                 TABLE_GET_CELL(table, move) != CELL_EMPTY)) {
+        pr_err("kxo: [two]: game-%d invalid move %d\n", id, move);
+        WRITE_ONCE(game->state, GAME_READY);
+        mutex_unlock(&game->lock);
+        return;
+    }
 
     if (move != -1) {
         WRITE_ONCE(xo_tlb->table, VAL_SET_CELL(table, move, CELL_X));
