@@ -255,18 +255,6 @@ static void ai_one_work_func(struct work_struct *w)
     WRITE_ONCE(move, play_agent_move(who, game, CELL_O));
     smp_mb();
 
-    if (move == AI_RESCHED) {
-        WRITE_ONCE(game->state, GAME_RESCHED);
-        WRITE_ONCE(game->cpu, clear_force(game->cpu));
-        game->nsecs_spent += ktime_to_ns(ktime_sub(ktime_get(), tv_start));
-        if (!resched_self(game->cpu, &game->ai_one_work)) {
-            WRITE_ONCE(game->state, GAME_READY);
-        }
-        smp_wmb();
-        mutex_unlock(&game->lock);
-        return;
-    }
-
     if (move != -1) {
         WRITE_ONCE(xo_tlb->table, VAL_SET_CELL(table, move, CELL_O));
         WRITE_ONCE(xo_tlb->moves, SET_RECORD_CELL(xo_tlb->moves, move, steps));
@@ -331,18 +319,6 @@ static void ai_two_work_func(struct work_struct *w)
     pr_debug("[two]: id=%d, alg=%d\n", id, who);
     WRITE_ONCE(move, play_agent_move(who, game, CELL_X));
     smp_mb();
-
-    if (move == AI_RESCHED) {
-        WRITE_ONCE(game->state, GAME_RESCHED);
-        WRITE_ONCE(game->cpu, clear_force(game->cpu));
-        game->nsecs_spent += ktime_to_ns(ktime_sub(ktime_get(), tv_start));
-        if (!resched_self(game->cpu, &game->ai_two_work)) {
-            WRITE_ONCE(game->state, GAME_READY);
-        }
-        smp_wmb();
-        mutex_unlock(&game->lock);
-        return;
-    }
 
     if (move != -1) {
         WRITE_ONCE(xo_tlb->table, VAL_SET_CELL(table, move, CELL_X));

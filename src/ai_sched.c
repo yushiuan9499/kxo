@@ -17,41 +17,6 @@ static unsigned long *old_idle_ticks = NULL;
 
 static struct workqueue_struct *ai_workqueue;
 
-struct sched_work {
-    struct work_struct work;
-    struct work_struct *task;
-    int cpu;
-};
-
-static void sched_work_func(struct work_struct *work)
-{
-    struct sched_work *bh = container_of(work, struct sched_work, work);
-
-    /* Wait until the bh->task is ready to be queued */
-    while (work_busy(bh->task)) {
-        cpu_relax();
-    }
-
-    bool ret = queue_work_on(bh->cpu, ai_workqueue, bh->task);
-    WARN_ON(!ret);
-    kfree(bh);
-}
-
-bool resched_self(int cpu, struct work_struct *work)
-{
-    struct sched_work *bh = kmalloc(sizeof(struct sched_work), GFP_ATOMIC);
-    if (!bh) {
-        pr_err("kxo: Failed to allocate work_struct for rescheduling\n");
-        return false;
-    }
-    INIT_WORK(&bh->work, sched_work_func);
-    bh->task = work;
-    bh->cpu = cpu;
-    schedule_work(&bh->work);
-    return true;
-}
-
-
 #if defined(CONFIG_X86_64) || defined(CONFIG_X86_32)
 unsigned long *calculated_capacity = NULL;
 static void x86_capacity_init(void)
@@ -131,7 +96,7 @@ void sched_games(unsigned long unfini, struct ai_game *games)
         struct ai_game *game = &games[id];
         enum ai_game_state state = READ_ONCE(game->state);
         char turn = READ_ONCE(game->turn);
-        int cpu = clear_force(READ_ONCE(game->cpu));
+        int cpu = READ_ONCE(game->cpu);
         smp_rmb();
 
         int who, other;
@@ -302,11 +267,11 @@ void sched_games(unsigned long unfini, struct ai_game *games)
         } else {
             who = (XO_ATTR_AI_ALG(game->xo_tlb.attr) >> 2) % XO_AI_TOT;
         }
-        int curr_cpu = clear_force(READ_ONCE(game->cpu));
+        int curr_cpu = READ_ONCE(game->cpu);
         if (cpu_budget[curr_cpu] < delay * LOAD_1MS >> 7 &&
             max_budget[who] > delay * LOAD_1MS * 7 / 8) {
             int new_cpu = best_cpu[who];
-            WRITE_ONCE(game->cpu, set_force(new_cpu));
+            WRITE_ONCE(game->cpu, new_cpu);
             cpu_budget[new_cpu] =
                 max(0l, cpu_budget[new_cpu] - (long) ai_load_safe[who]);
             best_cpu[who] = -1;

@@ -3,7 +3,6 @@
 #include <linux/string.h>
 
 #include "ai-game.h"
-#include "ai_sched.h"
 #include "game.h"
 #include "mcts.h"
 #include "util.h"
@@ -26,7 +25,7 @@ static DECLARE_HASHTABLE(hash_table, HT_BITS);
 struct mcts_state {
     struct ai_game *key;
     struct node *root;
-    int iter;
+    int round;
     struct hlist_node node;
 };
 
@@ -207,46 +206,45 @@ static struct mcts_state *find_mcts_state(struct ai_game *game)
     return NULL;
 }
 
+static void free_mcts_state(struct mcts_state *state)
+{
+    free_node(state->root);
+    spin_lock_bh(&hash_lock);
+    hash_del(&state->node);
+    spin_unlock_bh(&hash_lock);
+    kfree(state);
+}
+
 int mcts(struct ai_game *game, char player)
 {
     char win;
     unsigned int table = game->xo_tlb.table;
-    int old_cpu = READ_ONCE(game->cpu);
 
     struct node *root;
-    int iter_start;
+
     spin_lock_bh(&hash_lock);
     struct mcts_state *state = find_mcts_state(game);
     spin_unlock_bh(&hash_lock);
     if (!state) {
-        root = new_node(-1, player, NULL);
-        if (!root)
+        state = kzalloc(sizeof(struct mcts_state), GFP_KERNEL);
+        if (!state)
             return -1;
-        iter_start = 0;
-    } else {
-        root = state->root;
-        iter_start = state->iter;
+        state->root = new_node(-1, player, NULL);
+        if (!state->root) {
+            kfree(state);
+            return -1;
+        }
+        state->key = game;
+        state->round = 0;
+        spin_lock_bh(&hash_lock);
+        hash_add(hash_table, &state->node, hash_ptr(game, HT_BITS));
+        spin_unlock_bh(&hash_lock);
     }
+    root = state->root;
 
-    for (int i = iter_start; i < ITERATIONS; i++) {
+    for (int i = 0; i < ITERATIONS_PER_ROUND; i++) {
         if (READ_ONCE(kxo_stop_work))
             break;
-        if (check_sched(game, &old_cpu)) {
-            if (!state) {
-                state = kzalloc(sizeof(struct mcts_state), GFP_KERNEL);
-                if (!state) {
-                    free_node(root);
-                    return -1;
-                }
-                state->key = game;
-                state->root = root;
-                spin_lock_bh(&hash_lock);
-                hash_add(hash_table, &state->node, hash_ptr(game, HT_BITS));
-                spin_unlock_bh(&hash_lock);
-            }
-            state->iter = i;
-            return AI_RESCHED;
-        }
         struct node *node = root;
         uint32_t temp_table = table;
         while (1) {
@@ -272,6 +270,10 @@ int mcts(struct ai_game *game, char player)
                                       node->player ^ CELL_O ^ CELL_X);
         }
     }
+    state->round++;
+    if (state->round <= ROUNDS) {
+        return -1;
+    }
     struct node *best_node = root;
     int most_visits = -1;
     for (int i = 0; i < N_GRIDS; i++) {
@@ -281,13 +283,7 @@ int mcts(struct ai_game *game, char player)
         }
     }
     int best_move = best_node->move;
-    free_node(root);
-    if (state) {
-        spin_lock_bh(&hash_lock);
-        hash_del(&state->node);
-        spin_unlock_bh(&hash_lock);
-        kfree(state);
-    }
+    free_mcts_state(state);
     return best_move;
 }
 

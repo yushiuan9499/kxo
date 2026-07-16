@@ -15,25 +15,8 @@ extern load_t ai_load[XO_AI_TOT];
 extern spinlock_t load_lock;
 
 int init_ai_sched(void);
-bool resched_self(int cpu, struct work_struct *work);
 void sched_games(unsigned long unfini, struct ai_game *games);
 void free_ai_sched(void);
-
-#define is_force(cpu) (cpu & (1u << 31))
-#define clear_force(cpu) (cpu & ~(1u << 31))
-#define set_force(cpu) (cpu | (1u << 31))
-static inline bool check_sched(struct ai_game *game, int *old_cpu)
-{
-    int cpu = smp_processor_id();
-    unsigned game_cpu = READ_ONCE(game->cpu);
-    if (is_force(game_cpu))
-        return clear_force(game_cpu) != cpu;
-    if (cpu != *old_cpu) {
-        *old_cpu = cpu;
-        WRITE_ONCE(game->cpu, cpu);
-    }
-    return false;
-}
 
 #if defined(CONFIG_X86_64) || defined(CONFIG_X86_32)
 extern unsigned long *calculated_capacity;
