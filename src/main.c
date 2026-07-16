@@ -69,6 +69,14 @@ static struct ai_agent agents[XO_AI_TOT] = {
 static int episode_moves[N_GAMES][N_GRIDS] = {0};
 static rl_fxp reward[N_GAMES][N_GRIDS] = {0};
 
+#define WIN_RATE_DEBUG 0
+
+#if WIN_RATE_DEBUG
+unsigned match_count[XO_AI_TOT] = {0};
+unsigned win_count[XO_AI_TOT] = {0};
+unsigned draw_count[XO_AI_TOT] = {0};
+#endif
+
 static void clear_episode(int id)
 {
     memset(episode_moves[id], 0, sizeof(episode_moves[id]));
@@ -542,6 +550,28 @@ static void timer_handler(struct timer_list *__timer)
                         agents[alg % XO_AI_TOT].name,
                         agents[(alg >> 2) % XO_AI_TOT].name);
             }
+#if WIN_RATE_DEBUG
+            match_count[XO_ATTR_AI_ALG(xo_tlb->attr) % XO_AI_TOT]++;
+            match_count[(XO_ATTR_AI_ALG(xo_tlb->attr) >> 2) % XO_AI_TOT]++;
+            switch (win) {
+            case CELL_O:
+                win_count[XO_ATTR_AI_ALG(xo_tlb->attr) % XO_AI_TOT]++;
+                break;
+            case CELL_X:
+                win_count[(XO_ATTR_AI_ALG(xo_tlb->attr) >> 2) % XO_AI_TOT]++;
+                break;
+            case CELL_D:
+                draw_count[XO_ATTR_AI_ALG(xo_tlb->attr) % XO_AI_TOT]++;
+                draw_count[(XO_ATTR_AI_ALG(xo_tlb->attr) >> 2) % XO_AI_TOT]++;
+                break;
+            }
+            pr_debug(
+                "kxo: match_count = {%u, %u, %u}, win_count = {%u, %u, %u}, "
+                "draw_count = {%u, %u, %u}\n",
+                match_count[0], match_count[1], match_count[2], win_count[0],
+                win_count[1], win_count[2], draw_count[0], draw_count[1],
+                draw_count[2]);
+#endif
             /* Defer sleeping work (mutex, kfifo, RL update) to workqueue */
             WRITE_ONCE(game->state, GAME_DONE);
             finish_works[i].game_idx = i;
