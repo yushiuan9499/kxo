@@ -7,6 +7,7 @@
 #include "game.h"
 #include "mcts.h"
 #include "util.h"
+#include "xoroshiro.h"
 
 struct node {
     int move;
@@ -17,8 +18,7 @@ struct node {
     struct node *children[N_GRIDS];
 };
 
-static DEFINE_SPINLOCK(xoro_lock);
-static struct mcts_info mcts_obj;
+DEFINE_PER_CPU(struct state_array, xoro_obj);
 
 #define HT_BITS 4
 static DEFINE_SPINLOCK(hash_lock);
@@ -131,11 +131,16 @@ static struct node *select_move(struct node *node)
 
 static fixed_point_t simulate(uint32_t table, char player)
 {
+    struct state_array *this_xoro_obj;
     char current_player = player;
     uint32_t temp_table = table;
-    spin_lock_bh(&xoro_lock);
-    xoro_jump(&(mcts_obj.xoro_obj));
-    spin_unlock_bh(&xoro_lock);
+    int cpu;
+
+    cpu = get_cpu();
+    this_xoro_obj = per_cpu_ptr(&xoro_obj, cpu);
+    xoro_jump(this_xoro_obj);
+    put_cpu();
+
     while (1) {
         int *moves = available_moves(temp_table);
         if (moves[0] == -1) {
@@ -145,10 +150,13 @@ static fixed_point_t simulate(uint32_t table, char player)
         int n_moves = 0;
         while (n_moves < N_GRIDS && moves[n_moves] != -1)
             ++n_moves;
-        spin_lock_bh(&xoro_lock);
-        u64 rand_val = xoro_next(&(mcts_obj.xoro_obj));
-        spin_unlock_bh(&xoro_lock);
+
+        cpu = get_cpu();
+        this_xoro_obj = per_cpu_ptr(&xoro_obj, cpu);
+        u64 rand_val = xoro_next(this_xoro_obj);
+        put_cpu();
         int move = moves[rand_val % n_moves];
+
         kfree(moves);
         temp_table = VAL_SET_CELL(temp_table, move, current_player);
         char win;
@@ -283,9 +291,22 @@ int mcts(struct ai_game *game, char player)
     return best_move;
 }
 
+static void this_cpu_init(void *data)
+{
+    struct state_array *xoro_obj_cpu = this_cpu_ptr(&xoro_obj);
+    xoro_init(xoro_obj_cpu);
+}
+
 void mcts_init(void)
 {
-    xoro_init(&(mcts_obj.xoro_obj));
+    int cpu;
+    for_each_online_cpu(cpu)
+    {
+        int err = smp_call_function_single(cpu, this_cpu_init, NULL, 1);
+        if (err) {
+            pr_err("kxo: failed to initialize xoro_obj for CPU %d\n", cpu);
+        }
+    }
 }
 
 void free_mcts(void)
