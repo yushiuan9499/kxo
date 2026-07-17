@@ -44,7 +44,7 @@ MODULE_DESCRIPTION("In-kernel Tic-Tac-Toe game engine");
 #define NR_KMLDRV 1
 
 static int avg_period = 1000;
-static int delay = 10; /* time (in ms) to generate an event */
+static int delay = 100; /* time (in ms) to generate an event */
 
 /* Declare kernel module attribute for sysfs */
 
@@ -247,6 +247,7 @@ static void ai_one_work_func(struct work_struct *w)
      */
     if (kxo_shutting_down()) {
         WRITE_ONCE(game->state, GAME_READY);
+        this_cpu_add(work_done, 1);
         return;
     }
 
@@ -268,6 +269,7 @@ static void ai_one_work_func(struct work_struct *w)
         pr_err("kxo: [one]: game-%d invalid move %d\n", id, move);
         WRITE_ONCE(game->state, GAME_READY);
         mutex_unlock(&game->lock);
+        this_cpu_add(work_done, 1);
         return;
     }
 
@@ -301,6 +303,10 @@ static void ai_one_work_func(struct work_struct *w)
 
     commit_load(smp_processor_id(), who, nsecs);
 
+    this_cpu_add(work_done, 1);
+    this_cpu_write(done_time, tv_end);
+
+
     pr_info("kxo: [CPU#%d] game-%d %s:%s completed in %llu usec\n",
             smp_processor_id(), id, __func__, agent->name,
             (unsigned long long) nsecs >> 10);
@@ -320,6 +326,7 @@ static void ai_two_work_func(struct work_struct *w)
 
     if (kxo_shutting_down()) {
         WRITE_ONCE(game->state, GAME_READY);
+        this_cpu_add(work_done, 1);
         return;
     }
 
@@ -341,6 +348,7 @@ static void ai_two_work_func(struct work_struct *w)
         pr_err("kxo: [two]: game-%d invalid move %d\n", id, move);
         WRITE_ONCE(game->state, GAME_READY);
         mutex_unlock(&game->lock);
+        this_cpu_add(work_done, 1);
         return;
     }
 
@@ -374,6 +382,8 @@ static void ai_two_work_func(struct work_struct *w)
 
     commit_load(smp_processor_id(), who, nsecs);
 
+    this_cpu_add(work_done, 1);
+    this_cpu_write(done_time, tv_end);
 
     pr_info("kxo: [CPU#%d]  game-%d %s:%s completed in %llu usec\n",
             smp_processor_id(), id, __func__, agent->name,
@@ -840,7 +850,6 @@ static void __exit kxo_exit(void)
     cdev_del(&kxo_cdev);
     unregister_chrdev_region(dev_id, NR_KMLDRV);
     free_rl_agent();
-    free_negamax();
     free_mcts();
     zobrist_destroy();
     free_ai_sched();

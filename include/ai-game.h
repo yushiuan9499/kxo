@@ -26,7 +26,6 @@ struct ai_avg {
 struct ai_game {
     struct xo_table xo_tlb;
     char turn;
-    unsigned cpu;
     unsigned long nsecs_spent;
     enum ai_game_state state;
     struct mutex lock;
